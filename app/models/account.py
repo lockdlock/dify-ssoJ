@@ -199,8 +199,8 @@ class Account(UserMixin, Base):
             name=name,
             avatar=avatar,
             interface_theme="light",
-            interface_language="zh-Hans",
-            timezone="Asia/Shanghai",
+            interface_language="ja-JP",
+            timezone="Asia/Tokyo",
             status=AccountStatus.ACTIVE,
             initialized_at=datetime.now(UTC),
         )

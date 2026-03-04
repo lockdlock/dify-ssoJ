@@ -101,18 +101,18 @@ class OIDCService:
     def bind_account(self, code: str, client_host: str, redirect_uri_params: str = "") -> Account:
         """binds a user to the system"""
         try:
-            # 获取访问令牌
+            # Get access token
             token_response = self.get_token(code, redirect_uri_params)
             access_token = token_response.get('access_token')
 
-            # 获取用户信息
+            # Get user information
             user_info = self.get_user_info(access_token)
             user_name = user_info.get('name')
             user_email = user_info.get('email')
             user_roles = user_info.get('roles', [])
             logger.debug("用户信息: %s", user_info)
 
-            # 验证必填字段
+            # Validate required fields
             if not user_email:
                 logger.error("用户邮箱信息缺失: %s", user_info)
                 raise Exception("User email is required")
@@ -120,9 +120,11 @@ class OIDCService:
             if not user_name:
                 user_name = user_email.split('@')[0]  # 使用邮箱前缀作为默认用户名
 
-            # 确定用户角色（按优先级从高到低判断）
+            # Determine user roles (based on priority from highest to lowest)
             user_role = TenantAccountRole(self.account_default_role) if TenantAccountRole.is_valid_role(
                 self.account_default_role) else TenantAccountRole.NORMAL
+            if TenantAccountRole.OWNER in user_roles:
+                user_role = TenantAccountRole.OWNER
             if TenantAccountRole.ADMIN in user_roles:
                 user_role = TenantAccountRole.ADMIN
             elif TenantAccountRole.EDITOR in user_roles:
@@ -130,12 +132,12 @@ class OIDCService:
             elif TenantAccountRole.NORMAL in user_roles:
                 user_role = TenantAccountRole.NORMAL
 
-            # 查找系统用户
+            # Find system users
             account = Account.get_by_email(user_email)
 
-            # 如果系统用户不存在，则创建系统用户
+            # If the system user does not exist, create the system user.
             if not account:
-                logger.info("创建用户: %s, 角色: %s", user_email, user_role)
+                logger.info("CreateUser: %s, Role: %s", user_email, user_role)
                 account = Account.create(
                     email=user_email,
                     name=user_name,
@@ -143,21 +145,21 @@ class OIDCService:
                 )
                 TenantAccountJoin.create(self.tenant_id, account.id, user_role)
             else:
-                # 如果用户已存在，检查是否属于当前租户
+                # If the user already exists, check if they belong to the current tenant.
                 tenant_account_join = TenantAccountJoin.get_by_account(
                     self.tenant_id, account.id
                 )
                 if not tenant_account_join:
-                    logger.info("用户 %s 不属于当前租户，创建关联: 角色 %s", user_email, user_role)
+                    logger.info("user %s Not_belonging_to_the_current_tenant，Create_association: Role %s", user_email, user_role)
                     tenant_account_join = TenantAccountJoin.create(self.tenant_id, account.id, user_role)
                 else:
-                    # 更新角色（如果有变化）
+                    # update role（if there are change）
                     if tenant_account_join.role != user_role:
-                        logger.info("用户角色更新: %s (%s -> %s)", user_email, tenant_account_join.role, user_role)
+                        logger.info("User_role_update: %s (%s -> %s)", user_email, tenant_account_join.role, user_role)
                         tenant_account_join.role = user_role
                         db.session.add(tenant_account_join)
 
-            # 更新用户登录信息
+            # Update the user login information
             account.last_login_at = naive_utc_now()
             account.last_login_ip = client_host
             if account.status != AccountStatus.ACTIVE:
@@ -167,19 +169,19 @@ class OIDCService:
 
             db.session.add(account)
             db.session.commit()
-            logger.info("用户验证成功: %s, 角色: %s", user_email, user_role)
+            logger.info("User_verification_succeeded: %s, role: %s", user_email, user_role)
             return account
         except Exception as e:
-            logger.exception("处理用户信息验证时发生错误: %s", str(e))
+            logger.exception("Error_occurred_while_verifying_user_information: %s", str(e))
             raise
 
     def handle_callback(self, code: str, client_host: str, redirect_uri_params: str = "", app_code: str = "") -> Dict[
         str, str]:
-        # 处理回调，返回access token和refresh token
+        # Process the callback and return the access and refresh tokens
         try:
             account = self.bind_account(code, client_host, redirect_uri_params)
 
-            # 生成JWT token
+            # generate JWT token
             exp_dt = naive_utc_now() + timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
             exp = int(exp_dt.timestamp())
             account_id = str(account.id)

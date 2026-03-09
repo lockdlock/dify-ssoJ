@@ -177,9 +177,9 @@ docker run -p 8000:8000 --env-file .env lework/dify-sso
 3. 在 dify-proxy 的 nginx 配置文件中添加以下配置：
 
 ```nginx
-location ~ (/console/api/system-features|/console/api/enterprise/sso/) {
-  proxy_pass http://dify-sso:8000;
-  include proxy.conf;
+location ~ (/console/api/system-features|/console/api/enterprise/|/api/webapp/|/api/enterprise/) {
+proxy_pass http://dify-sso:8000;
+include proxy.conf;
 }
 ```
 

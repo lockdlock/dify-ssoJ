@@ -144,10 +144,16 @@ def get_app_permission():
     try:
         auth_header = request.headers.get("Authorization")
         if auth_header is None:
+            csrf_token = request.headers.get("X-Csrf-Token")
+            if csrf_token:
+                decoded = PassportService().verify(csrf_token)
+                logger.info(f"app_id {app_id} decoded csrf token: {decoded}")
+                user_id = decoded.get("sub", decoded.get("user_id", "visitor"))
+                raise Exception("use csrf token")
             raise
         if " " not in auth_header:
             raise
-
+            
         auth_scheme, tk = auth_header.split(None, 1)
         auth_scheme = auth_scheme.lower()
         if auth_scheme != "bearer":

@@ -370,7 +370,7 @@ def get_webapp_permission_batch():
     appIds = request.json.get("appIds", [])
     userId = request.json.get("userId", "")
     permissions = {}
-    logger.info(f"get_webapp_permission_batch: appCodes={appCodes}, userId={userId}")
+    logger.info(f"get_webapp_permission_batch: appCodes={appCodes}, appIds={appIds}, userId={userId}")
 
     # Handle appIds (sent by Dify API)
     for app_id in appIds:

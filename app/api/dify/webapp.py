@@ -149,49 +149,44 @@ def get_app_permission():
                 decoded = PassportService().verify(csrf_token)
                 logger.info(f"app_id {app_id} decoded csrf token: {decoded}")
                 user_id = decoded.get("sub", decoded.get("user_id", "visitor"))
-                raise Exception("use csrf token")
-            raise
-        if " " not in auth_header:
-            raise
-            
-        auth_scheme, tk = auth_header.split(None, 1)
-        auth_scheme = auth_scheme.lower()
-        if auth_scheme != "bearer":
-            raise
+            else:
+                # どちらもなければ visitor のまま継続（クラッシュさせない）
+                logger.info(f"app_id {app_id}: no auth header, no csrf token, treating as visitor")
+        else:
+            if " " not in auth_header:
+                logger.warning("Malformed Authorization header")
+            else:
+                auth_scheme, tk = auth_header.split(None, 1)
+                if auth_scheme.lower() == "bearer":
 
-        decoded = PassportService().verify(tk)
-        logger.info(f"app_id {app_id} decoded token: {decoded}")
-        user_id = decoded.get("end_user_id", decoded.get("user_id", "visitor"))
+                    decoded = PassportService().verify(tk)
+                    logger.info(f"app_id {app_id} decoded token: {decoded}")
+                    user_id = decoded.get("end_user_id", decoded.get("user_id", "visitor"))
     except Exception as e:
-        logger.error(f"get_app_permission error: {e}")
-        pass
+        logger.error(f"get_app_permission token parse error: {e}")
+        # user_id は visitor のまま継続
 
+    # アクセスモード判定
     access_mode = "public"
     access_mode_value = redis_client.get(f"webapp_access_mode:{app_id}")
     if access_mode_value is not None:
         access_mode = access_mode_value.decode()
 
+    logger.info(f"app_id={app_id}, user_id={user_id}, access_mode={access_mode}")
+
     if access_mode == "public":
-        logger.info(f"app_id {app_id} is public, access granted")
+
         return {"result": True}
 
     if access_mode in ["private_all", "sso_verified"] and user_id != "visitor":
-        logger.info(f"app_id {app_id} is private_all or sso_verified, user_id {user_id} is not visitor, access granted")
-        return {"result": True}
-    else:
-        accounts_value = redis_client.get(f"webapp_access_mode:accounts:{app_id}")
-        if accounts_value:
-            accounts = accounts_value.decode().split(",")
-            if user_id in accounts:
-                logger.info(f"app_id {app_id} has accounts set, user_id {user_id} is in accounts, access granted")
-                return {"result": True}
-            else:
-                logger.info(f"app_id {app_id} has accounts set, user_id {user_id} is not in accounts, access denied")
-                return {"result": False}
-        else:
-            logger.info(f"app_id {app_id} has no accounts set, access denied")
-            return {"result": False}
 
+        return {"result": True}
+
+    accounts_value = redis_client.get(f"webapp_access_mode:accounts:{app_id}")
+    if accounts_value:
+        accounts = accounts_value.decode().split(",")
+        return {"result": user_id in accounts}
+    return {"result": False}
 
 @api.get("/console/api/enterprise/webapp/app/subjects")
 def get_app_subjects():
@@ -224,16 +219,16 @@ def get_app_subjects():
 @api.get("/console/api/enterprise/webapp/app/subject/search")
 def search_app_subjects():
     try:
-        # 参数验证和获取
+        # Parameter validation and retrieval
         page = max(1, int(request.args.get("pageNumber", 1)))
         page_size = min(100, max(1, int(request.args.get("resultsPerPage", 10))))  # 限制页面大小
         keyword = request.args.get("keyword", "").strip()
         logger.info(f"search_app_subjects: page={page}, page_size={page_size}, keyword={keyword}")
 
-        # 构建基础查询条件
+        # Build base query conditions
         base_query = db.session.query(Account).filter(Account.status == AccountStatus.ACTIVE)
 
-        # 添加搜索条件 - 支持姓名和邮箱搜索
+        # Add search conditions – support name and email search
         if keyword:
             search_filter = db.or_(
                 Account.name.ilike(f"%{keyword}%"),
@@ -241,10 +236,10 @@ def search_app_subjects():
             )
             base_query = base_query.filter(search_filter)
 
-        # 计算总数和分页数据（使用窗口函数优化）
+        # Calculate total count and paginated data (optimized using window functions)
         paginated_query = base_query.order_by(Account.name, Account.id)  # 确保排序稳定性
 
-        # 获取总数
+        # Get total count
         total_count = base_query.count()
 
         if total_count == 0:
@@ -255,11 +250,11 @@ def search_app_subjects():
                 "hasMore": False,
             }
 
-        # 分页查询
+        # Paginated query
         offset = (page - 1) * page_size
         users = paginated_query.limit(page_size).offset(offset).all()
 
-        # 构建响应数据
+        # Build response data
         subjects = [
             {
                 "subjectId": str(user.id),
@@ -275,7 +270,7 @@ def search_app_subjects():
             for user in users
         ]
 
-        # 计算分页信息
+        # Calculate pagination information
         total_pages = math.ceil(total_count / page_size)
         has_more = page < total_pages
 
@@ -287,13 +282,13 @@ def search_app_subjects():
         }
 
     except ValueError as e:
-        # 参数类型错误
+        # Parameter type error
         return {
             "error": "Invalid parameter format",
             "message": "pageNumber and resultsPerPage must be valid integers"
         }, 400
     except Exception as e:
-        # 其他异常
+        # Other exceptions / Other errors
         return {
             "error": "Internal server error",
             "message": "An error occurred while searching subjects"
@@ -332,7 +327,7 @@ def get_webapp_permission():
     app_code = request.args.get("appCode", "")
     user_id = request.args.get("userId", "")
     app_id = request.args.get("appId", "")
-    logger.info(f"get_webapp_permission: app_code={app_code}, user_id={user_id}")
+    logger.info(f"get_webapp_permission_batch: appCodes={appCodes}, appIds={appIds}, userId={userId}")
 
     if app_code != "":
         site = db.session.query(Site).filter(Site.code == app_code).first()
@@ -372,10 +367,33 @@ def get_webapp_permission():
 @api.post("/webapp/permission/batch")
 def get_webapp_permission_batch():
     appCodes = request.json.get("appCodes", [])
+    appIds = request.json.get("appIds", [])
     userId = request.json.get("userId", "")
     permissions = {}
     logger.info(f"get_webapp_permission_batch: appCodes={appCodes}, userId={userId}")
 
+    # Handle appIds (sent by Dify API)
+    for app_id in appIds:
+        permissions[app_id] = False
+        access_mode = "public"
+        access_mode_value = redis_client.get(f"webapp_access_mode:{app_id}")
+        if access_mode_value is not None:
+            access_mode = access_mode_value.decode()
+        if access_mode == "public":
+            permissions[app_id] = True
+            continue
+        if access_mode in ["private_all", "sso_verified"]:
+            permissions[app_id] = True
+            continue
+        else:
+            accounts_value = redis_client.get(f"webapp_access_mode:accounts:{app_id}")
+            if accounts_value:
+                accounts = accounts_value.decode().split(",")
+                permissions[app_id] = userId in accounts
+            else:
+                permissions[app_id] = False
+
+    # Handle appCodes (legacy)
     for app_code in appCodes:
         permissions[app_code] = False
         site = db.session.query(Site).filter(Site.code == app_code).first()
@@ -400,10 +418,8 @@ def get_webapp_permission_batch():
             accounts_value = redis_client.get(f"webapp_access_mode:accounts:{app_id}")
             if accounts_value:
                 accounts = accounts_value.decode().split(",")
-                if userId in accounts:
-                    permissions[app_code] = True
-                else:
-                    permissions[app_code] = False
+                permissions[app_code] = userId in accounts
+            
             else:
                 permissions[app_code] = False
 
@@ -428,7 +444,7 @@ def clean_webapp_access_mode():
 # PluginManagerService
 @api.post("/check-credential-policy-compliance")
 def check_credential_policy_compliance():
-    # 示例请求体
+    # Example request body
     # {'dify_credential_id': '0198eabb-3b2c-793e-a491-3ddf5bfc75a6', 'provider': 'langgenius/tongyi/tongyi', 'credential_type': 0}
     data = request.json
     logger.info(f"check_credential_policy_compliance called with data: {data}")
